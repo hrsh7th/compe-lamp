@@ -98,6 +98,9 @@ function! s:documentation(server, args) abort
     let l:document += ['```']
   endif
   if has_key(l:completion_item, 'documentation')
+    if has_key(l:completion_item, 'detail')
+      let l:document += ['']
+    endif
     let l:document += [s:MarkupContent.normalize(l:completion_item.documentation)]
   endif
   call a:args.callback(l:document)
@@ -132,7 +135,7 @@ function! s:complete(server, args) abort
   endif
 
   let s:id += 1
-  echomsg string('request' . s:id . ': ' . a:args.context.before_line)
+  " echomsg string('request' . s:id . ': ' . a:args.context.before_line)
   let l:p = a:server.request('textDocument/completion', l:request, {
   \   'cancellation_token': s:state.cancellation_token,
   \ })
@@ -150,16 +153,11 @@ endfunction
 " on_response
 "
 function! s:on_response(server, args, request, response) abort
-  if index([type([]), type({})], type(a:response)) == -1
+  if a:response is# v:null
     return a:args.abort()
   endif
 
-  call a:args.callback(compe#helper#convert_lsp({
-  \   'keyword_pattern_offset': a:args.keyword_pattern_offset,
-  \   'context': a:args.context,
-  \   'request': a:request,
-  \   'response': a:response
-  \ }))
+  call a:args.callback(a:response)
 endfunction
 
 
