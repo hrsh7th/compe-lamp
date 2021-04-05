@@ -31,20 +31,19 @@ function! s:source() abort
   let l:servers = filter(l:servers, { _, server -> server.supports('capabilities.completionProvider') })
   let s:state.source_ids = map(copy(l:servers), { _, server ->
   \   compe#register_source('lamp', {
-  \     'get_metadata': function('s:get_metadata', [server]),
+  \     'metadata': function('s:metadata', [server]),
   \     'determine': function('s:determine', [server]),
   \     'resolve': function('s:resolve', [server]),
-  \     'documentation': function('s:documentation', [server]),
-  \     'confirm': function('s:confirm', [server]),
+  \     'execute': function('s:execute', [server]),
   \     'complete': function('s:complete', [server]),
   \   })
   \ })
 endfunction
 
 "
-" s:get_metadata
+" metadata
 "
-function! s:get_metadata(server) abort
+function! s:metadata(server) abort
   return {
   \   'priority': 1000,
   \   'menu': '[LSP]',
@@ -69,58 +68,28 @@ endfunction
 " resolve
 "
 function! s:resolve(server, args) abort
-  let l:completion_item = a:args.completed_item.user_data.compe.completion_item
-  if a:server.supports('capabilities.completionProvider.resolveProvider')
-    let l:ctx = {}
-    function! l:ctx.callback(args, completion_item) abort
-      let a:args.completed_item.user_data.compe.completion_item = a:completion_item
-      call a:args.callback(a:args.completed_item)
-    endfunction
-    call a:server.request('completionItem/resolve', l:completion_item).then({
-    \   completion_item -> l:ctx.callback(a:args, completion_item)
-    \ }).catch({ ->
-    \   l:ctx.callback(a:args, l:completion_item)
-    \ })
-  else
-    call a:args.callback(a:args.completed_item)
+  if !a:server.supports('capabilities.completionProvider.resolveProvider')
+    return a:args.callback(a:args.completion_item)
   endif
+  let l:p = a:server.request('completionItem/resolve', a:args.completion_item)
+  let l:p = l:p.then({ resolved_completion_item -> s:on_resolve(a:args, resolved_completion_item) })
+  let l:p = l:p.catch({ -> s:on_resolve(a:args, a:args.completion_item) })
+endfunction
+function! s:on_resolve(args, completion_item) abort
+  call a:args.callback(a:completion_item)
 endfunction
 
 "
-" documentation
+" execute
 "
-function! s:documentation(server, args) abort
-  let l:completion_item = a:args.completed_item.user_data.compe.completion_item
-  let l:document = []
-  if has_key(l:completion_item, 'detail')
-    let l:document += [printf('```%s', a:args.context.filetype)]
-    let l:document += [l:completion_item.detail]
-    let l:document += ['```']
-  endif
-  if has_key(l:completion_item, 'documentation')
-    if has_key(l:completion_item, 'detail')
-      let l:document += ['']
-    endif
-    let l:document += [s:MarkupContent.normalize(l:completion_item.documentation)]
-  endif
-  call a:args.callback(l:document)
-endfunction
-
-"
-" confirm
-"
-function! s:confirm(server, args) abort
-  call compe#confirmation#lsp({
-  \   'completed_item': a:args.completed_item,
-  \   'completion_item': a:args.completed_item.user_data.compe.completion_item,
-  \   'request_position': a:args.completed_item.user_data.compe.request_position,
-  \ })
+function! s:execute(server, args) abort
+  let l:completion_item = a:args.completion_item
+  echomsg string(l:completion_item)
 endfunction
 
 "
 " complete
 "
-let s:id = 0
 function! s:complete(server, args) abort
   call s:state.cancellation_token.cancel()
   let s:state.cancellation_token = lamp#cancellation_token()
@@ -134,25 +103,13 @@ function! s:complete(server, args) abort
     let l:request.context.triggerCharacter = a:args.context.before_char
   endif
 
-  let s:id += 1
-  " echomsg string('request' . s:id . ': ' . a:args.context.before_line)
   let l:p = a:server.request('textDocument/completion', l:request, {
   \   'cancellation_token': s:state.cancellation_token,
   \ })
   let l:p = l:p.catch({ -> a:args.abort() })
-  let l:p = l:p.then({ response ->
-  \   s:on_response(
-  \     a:server,
-  \     a:args,
-  \     l:request,
-  \     response
-  \   )
-  \ })
+  let l:p = l:p.then({ response -> s:on_complete(a:server, a:args, l:request, response) })
 endfunction
-"
-" on_response
-"
-function! s:on_response(server, args, request, response) abort
+function! s:on_complete(server, args, request, response) abort
   if a:response is# v:null
     return a:args.abort()
   endif
